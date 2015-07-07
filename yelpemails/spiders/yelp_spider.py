@@ -15,7 +15,7 @@ class MySpider(CrawlSpider):
         # Extract links matching 'item.php' and parse them with the spider's method parse_yelp
         # Rule(LinkExtractor(allow=('item\.php', )), callback='parse_yelp'),
 
-        # Rule(LinkExtractor(restrict_xpaths=('//a[@class = "page-option prev-next next"]', )))
+        Rule(LinkExtractor(restrict_xpaths=('//a[@class = "page-option prev-next next"]', )))
     )
 
     def parse_yelp(self, response):
@@ -43,7 +43,7 @@ class MySpider(CrawlSpider):
             item['email'] = email.strip()
             yield item
         else:
-            contact = response.xpath('//body//a[re:test(., "[Cc][Oo][Nn][Tt][Aa][Cc][Tt]")]/@href')
+            contact = response.xpath('//body//a[re:test(., "[Cc][Oo][Nn][Tt][Aa][Cc][Tt]|[Aa][Bb][Oo][Uu][Tt]")]/@href')
             if len(contact)>0:
                 contacturl = response.urljoin(contact.extract()[0])
                 request = scrapy.Request(contacturl, callback = self.parse_site)
