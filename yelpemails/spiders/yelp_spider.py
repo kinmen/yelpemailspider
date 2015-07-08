@@ -1,15 +1,16 @@
 import scrapy
+import json
 from scrapy.spiders import CrawlSpider, Rule
 from scrapy.linkextractors import LinkExtractor
 from yelpemails.items import YelpItem
 
 class MySpider(CrawlSpider):
     name = 'yelpemailspider'
+    FBaccesstoken = 'fillintokenhere'
     # start_urls = ['http://www.yelp.com/search?cflt=restaurants&find_loc=Los+Angeles%%2C+CA%%2C+USAfind_desc&start=%d' % i for i in xrange(10, 20, 10)]
     start_urls = ['http://www.yelp.com/search?cflt=restaurants&find_loc=Los+Angeles%2C+CA%2C+USAfind_desc&start=0']
     rules = (
-        # Extract links matching 'category.php' (but not matching 'subsection.php')
-        # and follow links from them (since no callback means follow=True by default).
+        # Extract yelp link for each business listing
         Rule(LinkExtractor(restrict_css=('.indexed-biz-name .biz-name', )), callback = 'parse_yelp'),
 
         # Extract links matching 'item.php' and parse them with the spider's method parse_yelp
@@ -39,6 +40,9 @@ class MySpider(CrawlSpider):
     def parse_site(self, response):
         item = response.meta['item']
         email = response.xpath('//body//text()').re_first(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
+        facebook = response.xpath('//a[contains(@href, "facebook.com")]/@href')
+        if facebook:
+            item['facebook'] = facebook.extract()[0]
         if email:
             item['email'] = email.strip()
             yield item
@@ -46,6 +50,41 @@ class MySpider(CrawlSpider):
             contact = response.xpath('//body//a[re:test(., "[Cc][Oo][Nn][Tt][Aa][Cc][Tt]|[Aa][Bb][Oo][Uu][Tt]")]/@href')
             if len(contact)>0:
                 contacturl = response.urljoin(contact.extract()[0])
-                request = scrapy.Request(contacturl, callback = self.parse_site)
+                request = scrapy.Request(contacturl, callback = self.parse_contact)
                 request.meta['item'] = item
                 yield request
+            else:
+                if facebook:
+                    facebookurl = item['facebook']
+                    fbgeturl = 'https://graph.facebook.com/v2.4/'+facebookurl+'?access_token='+self.FBaccesstoken+'&fields=emails'
+                    request = scrapy.Request(fbgeturl, callback = self.parse_facebook)
+                    request.meta['item'] = item
+                    yield request
+
+    def parse_contact(self,response):
+        item = response.meta['item']
+        email = response.xpath('//body//text()').re_first(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
+        if email:
+            item['email'] = email.strip()
+            yield item
+        else:
+            facebookurl = ''
+            if 'facebook' in item:
+                facebookurl = item['facebook']
+            else:
+                facebook = response.xpath('//a[contains(@href, "www.facebook.com")]/@href')
+                if len(facebook) > 0:
+                    facebookurl = facebook.extract()[0]
+
+            if facebookurl:
+                fbgeturl = 'https://graph.facebook.com/v2.4/'+facebookurl+'?access_token='+self.FBaccesstoken+'&fields=emails'
+                request = scrapy.Request(fbgeturl, callback = self.parse_facebook)
+                request.meta['item'] = item
+                yield request
+
+    def parse_facebook(self,response):
+        item = response.meta['item']
+        jsonresponse = json.loads(response.body)
+        if 'emails' in jsonresponse:
+            item['email'] = json.loads(response.body)['emails'][0]
+            yield item
