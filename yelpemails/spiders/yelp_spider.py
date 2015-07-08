@@ -13,12 +13,11 @@ class MySpider(CrawlSpider):
         # Extract yelp link for each business listing
         Rule(LinkExtractor(restrict_css=('.indexed-biz-name .biz-name', )), callback = 'parse_yelp'),
 
-        # Extract links matching 'item.php' and parse them with the spider's method parse_yelp
-        # Rule(LinkExtractor(allow=('item\.php', )), callback='parse_yelp'),
-
+        # Extract next page links and keep going.
         Rule(LinkExtractor(restrict_xpaths=('//a[@class = "page-option prev-next next"]', )))
     )
 
+    # Grab business website from yelp page.
     def parse_yelp(self, response):
         self.logger.info('Hi, this is an item page! %s', response.url)
         biz = response.xpath('//div[@class = "biz-website"]')
@@ -28,25 +27,25 @@ class MySpider(CrawlSpider):
             item = YelpItem()
             item['name'] = name[0].strip()
             item['website'] = websiteurl[0].strip()
-            # item['id'] = response.xpath('//td[@id="item_id"]/text()').re(r'ID: (\d+)')
-            # item['name'] = response.xpath('//td[@id="item_name"]/text()').extract()
-            # item['description'] = response.xpath('//td[@id="item_description"]/text()').extract()
-            # href = biz.xpath('a/@href')
-            # url = response.urljoin(href.extract()[0])
             request = scrapy.Request('http://'+ websiteurl[0], callback = self.parse_site)
             request.meta['item'] = item
             yield request
 
+    # Start looking for email in website.
     def parse_site(self, response):
         item = response.meta['item']
         email = response.xpath('//body//text()').re_first(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
+
+        #Save facebook for future search.
         facebook = response.xpath('//a[contains(@href, "facebook.com")]/@href')
         if facebook:
             item['facebook'] = facebook.extract()[0]
+
         if email:
             item['email'] = email.strip()
             yield item
         else:
+            #If no email in homepage, look for contact/about page and make request.
             contact = response.xpath('//body//a[re:test(., "[Cc][Oo][Nn][Tt][Aa][Cc][Tt]|[Aa][Bb][Oo][Uu][Tt]")]/@href')
             if len(contact)>0:
                 contacturl = response.urljoin(contact.extract()[0])
@@ -54,6 +53,7 @@ class MySpider(CrawlSpider):
                 request.meta['item'] = item
                 yield request
             else:
+            #If no contact page but have a facebook page, make request to Facebook api.
                 if facebook:
                     facebookurl = item['facebook']
                     fbgeturl = 'https://graph.facebook.com/v2.4/'+facebookurl+'?access_token='+self.FBaccesstoken+'&fields=emails'
@@ -68,6 +68,9 @@ class MySpider(CrawlSpider):
             item['email'] = email.strip()
             yield item
         else:
+            #If not in contact page, there could still be one in facebook, so have to try search there too.
+            # Because of async callback logics, code seems repetitive here with above. Looking within website has priority over facebook.
+            # In parse_site, it looks in facebook if there's no contact page. Here, it looks for facebook if it didn't find email in contact page.
             facebookurl = ''
             if 'facebook' in item:
                 facebookurl = item['facebook']
@@ -82,6 +85,7 @@ class MySpider(CrawlSpider):
                 request.meta['item'] = item
                 yield request
 
+    # Look for Email in facebook api response.
     def parse_facebook(self,response):
         item = response.meta['item']
         jsonresponse = json.loads(response.body)
